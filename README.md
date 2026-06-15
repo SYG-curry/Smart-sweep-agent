@@ -1,6 +1,7 @@
 # SmartSweepAgent · 智扫通机器人智能客服
 
 基于 **LangChain + FastAPI** 构建的扫地机器人领域智能客服 Agent。支持 RAG 知识库问答、多轮对话、用户认证与会话隔离、缓存与限流，是一个具备完整后端工程结构的 AI 应用。
+**当前主要完成一个完整后端，前端页面暂时未做，主要希望初学者通过Fast API自带的接口文档进行接口调试学习**
 
 > For English, see [README.en.md](README.en.md)
 
