@@ -1,0 +1,15 @@
+host: localhost
+port: 6379
+db: 0
+password:
+decode_responses: true
+
+cache:
+  rag_ttl: 300                      # RAG 缓存过期时间（秒）
+  rate_limit_ttl: 60                # 限流窗口时间（秒）
+  rate_limit_max_requests: 10       # 限流窗口内最大请求数
+
+
+
+
+

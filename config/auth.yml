@@ -1,0 +1,13 @@
+secret_key: "change-this-to-a-long-random-string-in-production"   # JWT签名密钥, 生产环境需要足够复杂的随机字符串
+algorithm: HS256
+access_token_expire_minutes: 60
+
+
+
+
+
+
+
+
+
+
