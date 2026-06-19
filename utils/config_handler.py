@@ -1,6 +1,6 @@
 # yaml-----k : v
 
-import yaml
+import yaml, os
 from utils.path_tool import get_abs_path
 
 
@@ -22,7 +22,10 @@ def load_agent_config(config_path: str=get_abs_path("config/agent.yml"), encodin
 
 def load_auth_config(config_path: str=get_abs_path("config/auth.yml"), encoding: str="utf-8"):
     with open(config_path, "r", encoding=encoding) as f:
-        return yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    if os.getenv("JWT_SECRET_KEY"):
+        config["secret_key"] = os.getenv("JWT_SECRET_KEY")
+    return config
 
 
 rag_conf = load_rag_config()

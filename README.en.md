@@ -1,23 +1,19 @@
 # SmartSweepAgent · Robot Vacuum AI Customer-Service Agent
 
-An AI customer-service Agent for the robot vacuum domain, built with **LangChain + FastAPI**. It supports RAG knowledge-base Q&A, multi-turn conversation, user authentication with session isolation, caching, and rate limiting — a complete backend-engineered AI application.
+SmartSweepAgent is a robot-vacuum-domain AI customer-service Agent built with **LangChain + FastAPI + Vue 3**. It supports RAG knowledge-base Q&A, multi-turn conversations, user authentication with session isolation, SSE streaming responses, Redis-based caching/rate limiting, and MySQL-backed log persistence.
 
 > 中文文档见 [README.md](README.md)
 
 ---
 
-## Table of Contents
+## Version Notes
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [API Reference](#api-reference)
-- [Running Tests](#running-tests)
-- [FAQ](#faq)
+| Version | Description |
+| --- | --- |
+| `v0.1.0` | Initial version: basic RAG Agent, FastAPI backend, and initial chat capability |
+| `v0.2.0` | Current version: user authentication, session isolation, Vue chat UI, SSE streaming, and MySQL log persistence |
+
+> Older versions can be viewed from GitHub **Tags / Releases**, for example `v0.1.0`.
 
 ---
 
@@ -25,105 +21,91 @@ An AI customer-service Agent for the robot vacuum domain, built with **LangChain
 
 | Module | Description |
 | --- | --- |
-| **ReAct Agent** | Built on LangChain with tool calling (knowledge retrieval, weather, user info, external data, report generation), plus middleware for tool monitoring and dynamic prompt switching |
-| **RAG Knowledge Base** | Chroma vector retrieval + Reranker re-ranking: recall Top-K candidates, then re-rank to keep Top-N, improving answer relevance |
-| **Multi-turn Chat** | Sessions persisted in SQLite, so history survives service restarts |
-| **User System** | JWT authentication + bcrypt password hashing, per-user session isolation, with anonymous access supported |
-| **Cache / Rate Limit** | Redis caches RAG retrieval results and rate-limits by IP+path; degrades gracefully when Redis is unavailable, keeping core features working |
-| **Unified Response** | All endpoints return a standard `{code, message, data, request_id, elapsed_ms}` structure, with global exception handling and request tracing |
-| **Dual Entry Points** | FastAPI provides a standard REST API; a Streamlit page is kept for quick demos |
+| **ReAct Agent** | Built on LangChain, with tool calling for knowledge retrieval, weather, user info, external data, and report generation |
+| **RAG Knowledge Base** | Chroma vector retrieval + Reranker re-ranking: recall Top-K candidates and keep the most relevant Top-N |
+| **Multi-turn Chat** | Sessions and messages are persisted in the database, with history loading, session list, and session deletion |
+| **User System** | JWT authentication + bcrypt password hashing, with per-user session isolation |
+| **SSE Streaming Chat** | `/api/chat/stream` emits `session` / `thinking` / `answer` / `done` / `error` events |
+| **Frontend UI** | Vue 3 + Pinia + Vue Router, with login/register, session list, Markdown rendering, and thinking-process display |
+| **Cache / Rate Limit** | Redis caches RAG retrieval results and rate-limits by IP+path; gracefully degrades when Redis is unavailable |
+| **Unified Response** | REST APIs return `{code, message, data, request_id, elapsed_ms}` consistently |
+| **Database Logging** | Runtime logs are written asynchronously to the MySQL `app_logs` table, with migration support for old log files |
+
+---
+
+## v0.2.0 Highlights
+
+Compared with `v0.1.0`, the current version adds and improves:
+
+- Vue 3 frontend project with login, registration, chat page, and session list.
+- JWT authentication and `/api/auth/me` current-user validation.
+- Per-user session isolation so users only access their own conversations.
+- Pinia `authStore` / `chatStore` state management, including fixes for stale chat content after switching users.
+- `/api/chat/stream` SSE endpoint with event-based rendering for thinking and final answer output.
+- Improved Agent streaming events, with final responses normalized as `answer` events.
+- MySQL support through the `DATABASE_URL` environment variable.
+- `app_logs` table and `DatabaseLogHandler` for database-backed runtime logs.
+- `scripts/migrate_logs_to_mysql.py` and `scripts/migrate_sqlite_to_mysql.py` migration scripts.
+- Improved `.gitignore` to avoid committing environment files, runtime logs, local databases, and build artifacts.
 
 ---
 
 ## Tech Stack
 
-- **Web Framework**: FastAPI · Uvicorn · Pydantic
+- **Backend Framework**: FastAPI · Uvicorn · Pydantic
 - **LLM / Agent**: LangChain · LangGraph · Tongyi Qianwen (qwen3-max)
 - **RAG**: Chroma · DashScope Embeddings (text-embedding-v4)
-- **Database**: SQLAlchemy + SQLite
+- **Database**: SQLAlchemy · MySQL (recommended) · SQLite fallback
 - **Cache / Rate Limit**: Redis
 - **Auth**: python-jose (JWT) · passlib + bcrypt
-- **Demo Frontend**: Streamlit
+- **Frontend**: Vue 3 · Vite · Pinia · Vue Router · Axios · markdown-it
+- **Logging**: Python logging · QueueHandler / QueueListener · MySQL `app_logs`
+- **Demo Entry**: Streamlit
 
 ---
 
 ## Architecture
 
+```text
+HTTP / SSE Request
+   │
+   ▼
+FastAPI Middleware (request_id / timing / access log)
+   │
+   ▼
+Rate Limit (Redis, graceful fallback)
+   │
+   ▼
+API Routers (auth / chat / health)
+   │
+   ├── ReactAgent + Tools → LLM / tool calls
+   ├── SessionManager → MySQL / SQLite
+   ├── RAG Service → Chroma + Redis
+   └── Logger → QueueHandler → DatabaseLogHandler → app_logs
 ```
-                    HTTP Request
-                        │
-        ┌───────────────▼────────────────┐
-        │  Middleware: request ID / timing / access log │
-        └───────────────┬────────────────┘
-                        │
-                ┌───────▼────────┐
-                │  Rate limit (Redis) │
-                └───────┬────────┘
-                        │
-              ┌─────────▼──────────┐
-              │  API Router Layer   │  api/routers
-              │  auth / chat / health│
-              └─────────┬──────────┘
-                        │
-         ┌──────────────┼───────────────┐
-         │              │               │
-  ┌──────▼─────┐ ┌──────▼──────┐ ┌──────▼───────┐
-  │ ReactAgent │ │SessionManager│ │  RAG Service  │
-  │ + tools    │ │ + Repository │ │ retrieve+rerank+cache │
-  └──────┬─────┘ └──────┬──────┘ └──────┬───────┘
-         │              │               │
-   tool/model calls   SQLite persist  Chroma + Redis
-```
-
-Request flow: middleware injects request context → rate-limit check → route dispatch → business layer (Agent / session management / RAG) → data layer (SQLite / Chroma) → unified response.
 
 ---
 
 ## Project Structure
 
-```
+```text
 SmartSweepAgent/
-├── api/                   # FastAPI service layer
-│   ├── main.py               # App entry: router registration, middleware, global exception handling
-│   ├── context.py            # Request-scoped ContextVar (request ID, start time)
-│   ├── routers/              # Routes: auth / chat / health
-│   ├── schemas/              # Pydantic request/response models
-│   ├── dependencies/         # Dependency injection: auth (JWT) / rate_limit
-│   ├── middleware/           # HTTP middleware: access logging
-│   └── exceptions/           # Business exception definitions
-├── agent/                 # Agent
-│   ├── react_agent.py        # ReAct Agent wrapper
-│   └── tools/                # Tool definitions and Agent middleware
-├── rag/                   # Retrieval-augmented generation
-│   ├── vector_store.py       # Chroma vector store (build / retrieve)
-│   ├── retriever.py          # Hybrid retriever (retrieve + rerank)
-│   ├── reranker.py           # Re-ranking
-│   └── rag_service.py        # RAG main flow (with cache)
-├── session/               # Sessions and users
-│   ├── models.py             # SQLAlchemy ORM (users / sessions / messages)
-│   ├── repository.py         # Database CRUD
-│   └── session_manager.py    # Business management layer
-├── model/
-│   └── factory.py            # Model factory (Chat / Embedding)
-├── utils/                 # Shared utilities
-│   ├── config_handler.py     # YAML config loading
-│   ├── db.py                 # Database connection and sessions
-│   ├── redis_client.py       # Redis connection (with degradation)
-│   ├── cache.py              # Cache read/write wrapper
-│   ├── jwt_handler.py        # JWT encode/decode
-│   ├── logger_handler.py     # Logging
-│   ├── file_handler.py       # File loading and MD5
-│   ├── prompt_loader.py      # Prompt loading
-│   └── path_tool.py          # Path utilities
-├── config/                # YAML config files
-│   ├── agent.yml / chroma.yml / rag.yml / prompts.yml
-│   ├── redis.yml / auth.yml
-├── prompts/                  # Prompt text
-├── data/                     # Knowledge-base source files and SQLite database
-├── logs/                     # Runtime logs
-├── app.py                    # Streamlit demo entry
-├── requirements.txt
-└── README.md
+├── api/                         # FastAPI service layer
+├── agent/                       # ReAct Agent and tools
+├── rag/                         # Vector retrieval, re-ranking, RAG service
+├── session/                     # User, session, message, and log ORM models
+├── model/                       # Model factory
+├── utils/                       # Config, database, Redis, JWT, logging utilities
+├── frontend/smartsweep-fronted/ # Vue 3 frontend
+├── scripts/                     # Log migration and SQLite-to-MySQL migration scripts
+├── config/                      # YAML config files
+├── prompts/                     # Prompt templates
+├── data/                        # Knowledge-base source files; local DB files are ignored
+├── tests/                       # Unit tests
+├── app.py                       # Streamlit demo
+├── requirements.txt             # Backend dependencies
+├── README.md
+└── README.en.md
 ```
 
 ---
@@ -131,14 +113,16 @@ SmartSweepAgent/
 ## Requirements
 
 - Python 3.10+ (developed on 3.11)
-- Redis (optional; degrades automatically when not running — caching and rate limiting are disabled but chat still works)
+- Node.js `^20.19.0 || >=22.12.0`
+- MySQL 8.x (recommended; SQLite fallback is also supported)
+- Redis (optional; disabled gracefully when unavailable)
 - Tongyi Qianwen / DashScope API Key
 
 ---
 
 ## Quick Start
 
-### 1. Create a virtual environment and install dependencies
+### 1. Install backend dependencies
 
 ```bash
 conda create -n RAG_Agent python=3.11
@@ -146,127 +130,109 @@ conda activate RAG_Agent
 pip install -r requirements.txt
 ```
 
-### 2. Configure the API Key
+### 2. Configure environment variables
 
-The project uses the Tongyi Qianwen model and requires the DashScope API Key environment variable:
+Copy `.env.example` to `.env` and update it for your local machine:
 
-```bash
-# Windows PowerShell
-$env:DASHSCOPE_API_KEY="your-key"
-
-# Linux / macOS
-export DASHSCOPE_API_KEY="your-key"
+```env
+DATABASE_URL=mysql+pymysql://root:your_password@localhost:3306/smartsweep?charset=utf8mb4
+DASHSCOPE_API_KEY=your_dashscope_api_key
 ```
 
-### 3. Review config files
+For SQLite fallback:
 
-Adjust the files under `config/` as needed (see [Configuration](#configuration)).
-**In production, be sure to change `secret_key` in `config/auth.yml` and safeguard the password in `config/redis.yml`.**
+```env
+DATABASE_URL=sqlite:///data/smartsweep_agent.db
+```
 
-### 4. Build the knowledge base (first run)
+### 3. Check MySQL
 
-Put your knowledge documents into the `data/` directory (`.txt` / `.pdf` supported), then build the vector store:
+```bash
+python test_mysql_connection.py
+```
+
+This script checks the MySQL connection and creates the database if it does not exist. Tables are created automatically when the FastAPI app starts.
+
+> This project is still in the development stage and does not use Alembic yet. Production projects should use Alembic for database migrations.
+
+### 4. Build the knowledge base
+
+Put knowledge documents into the `data/` directory (`.txt` / `.pdf` supported), then build the vector store:
 
 ```bash
 python -m rag.vector_store
 ```
 
-> Deduplicated by file MD5, so re-running won't ingest duplicates.
-
-### 5. Start the API server
+### 5. Start the backend
 
 ```bash
 python -m uvicorn api.main:app --port 8000
 ```
 
-After startup, open the interactive docs at `http://127.0.0.1:8000/docs`
+API docs: `http://127.0.0.1:8000/docs`
 
-### 6. (Optional) Start the Streamlit demo
+### 6. Start the frontend
 
 ```bash
-streamlit run app.py
+cd frontend/smartsweep-fronted
+npm install
+npm run dev
 ```
 
----
-
-## Configuration
-
-All configuration lives in the `config/` directory, in YAML format.
-
-| File | Key | Description |
-| --- | --- | --- |
-| `rag.yml` | `chat_model_name` / `embedding_model_name` | Chat model and embedding model names |
-| `chroma.yml` | `retriever_k` / `rerank_top_k` | Vector recall count / kept count after re-ranking |
-| `chroma.yml` | `chunk_size` / `chunk_overlap` | Document chunk size and overlap |
-| `chroma.yml` | `data_path` / `persist_directory` | Knowledge source directory / vector store persistence directory |
-| `agent.yml` | `external_data_path` | External user data file path |
-| `prompts.yml` | `*_prompt_path` | Prompt file paths per scenario |
-| `redis.yml` | `host` / `port` / `password` | Redis connection info |
-| `redis.yml` | `cache.rag_ttl` | RAG cache TTL (seconds) |
-| `redis.yml` | `cache.rate_limit_ttl` / `rate_limit_max_requests` | Rate-limit window / max requests per window |
-| `auth.yml` | `secret_key` / `algorithm` | JWT signing key and algorithm |
-| `auth.yml` | `access_token_expire_minutes` | Token validity (minutes) |
+Default frontend URL: `http://localhost:5173`
 
 ---
 
 ## API Reference
 
-The service prefix is `/api`; auth-related endpoints use the `/api/auth` prefix.
-
 ### Authentication
-
-| Method | Path | Description | Login required |
-| --- | --- | --- | --- |
-| POST | `/api/auth/register` | Register a user | No |
-| POST | `/api/auth/login` | Log in, returns a JWT token | No |
-| GET | `/api/auth/me` | Get current user info | Yes |
-
-### Chat and Sessions
-
-| Method | Path | Description | Login required |
-| --- | --- | --- | --- |
-| POST | `/api/chat` | Start a conversation (login optional; when logged in, sessions are bound to the user) | Optional |
-| GET | `/api/sessions` | List my sessions | Yes |
-| GET | `/api/session/{session_id}/messages` | Query session history | Optional (ownership checked) |
-| DELETE | `/api/session/{session_id}` | Delete a session | Optional (ownership checked) |
-
-### Others
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/health` | Health check |
-| GET | `/` | Service info |
+| POST | `/api/auth/register` | Register a user |
+| POST | `/api/auth/login` | Log in and return a JWT token |
+| GET | `/api/auth/me` | Get current user info |
 
-### Request Examples
+### Chat and Sessions
 
-```bash
-# Register
-curl -X POST http://127.0.0.1:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice", "password": "123456"}'
+| Method | Path | Description |
+| --- | --- | --- |
+| POST | `/api/chat` | Normal chat endpoint returning full JSON |
+| POST | `/api/chat/stream` | SSE streaming chat endpoint |
+| GET | `/api/sessions` | List current user's sessions |
+| GET | `/api/session/{session_id}/messages` | Query session history |
+| DELETE | `/api/session/{session_id}` | Delete a session |
 
-# Log in to get a token
-curl -X POST http://127.0.0.1:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice", "password": "123456"}'
+### SSE Events
 
-# Chat with the token
-curl -X POST http://127.0.0.1:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{"query": "Which robot vacuum suits a small apartment?", "session_id": null}'
+| Type | Description |
+| --- | --- |
+| `session` | Returns the current session ID |
+| `thinking` | Shows the Agent execution process |
+| `answer` | Final answer chunk |
+| `done` | Stream completed |
+| `error` | Stream failed |
+
+---
+
+## Logging and Migration
+
+Runtime logs can be written to the MySQL `app_logs` table:
+
+```text
+logger → QueueHandler → QueueListener → DatabaseLogHandler → app_logs
 ```
 
-### Unified Response Format
+Migrate old log files:
 
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": { "answer": "...", "session_id": "uuid" },
-  "request_id": "abc12345",
-  "elapsed_ms": 156.78
-}
+```bash
+python scripts/migrate_logs_to_mysql.py
+```
+
+Migrate SQLite data to MySQL:
+
+```bash
+python scripts/migrate_sqlite_to_mysql.py
 ```
 
 ---
@@ -277,38 +243,60 @@ curl -X POST http://127.0.0.1:8000/api/chat \
 pytest tests/ -v
 ```
 
-Tests cover JWT encode/decode, password hashing, session data access, and user isolation — i.e. core logic that does not depend on the LLM.
+Frontend build check:
+
+```bash
+cd frontend/smartsweep-fronted
+npm run build
+```
 
 ---
 
-## FAQ
+## FAQ (Tested During Development)
 
-**Q: Startup error `password cannot be longer than 72 bytes`?**
-passlib 1.7.4 is incompatible with bcrypt 5.x. Make sure `bcrypt==4.0.1` is installed (already pinned in `requirements.txt`).
+**Q: Startup error `password cannot be longer than 72 bytes`?**  
+passlib 1.7.4 is incompatible with bcrypt 5.x. Make sure `bcrypt==4.0.1` is installed.
 
-**Q: Request timeouts or Redis errors?**
-When Redis isn't running, the system degrades automatically — chat works normally, only caching and rate limiting are unavailable. If timeouts persist with Redis running, check `host` / `port` / `password` in `config/redis.yml`.
+**Q: Request timeout or Redis errors?**  
+When Redis is not running, the system degrades automatically. Chat still works; only caching and rate limiting are unavailable. If Redis is running but errors persist, check `config/redis.yml`.
 
-**Q: Foreign-key or field errors after changing ORM models?**
-`create_all` does not alter existing table structures. Delete `data/smartsweep_agent.db` and restart the service to rebuild the tables.
+**Q: ORM model changes do not appear in the database?**  
+`Base.metadata.create_all()` only creates missing tables; it does not alter existing table structures. During development, you can recreate the local test database. For MySQL, update the schema manually or introduce Alembic later.
 
-**Q: Code changed but endpoint behavior didn't?**
-An old uvicorn process may still hold the port. Confirm request logs appear in the terminal, and kill leftover processes before restarting if needed.
-On Windows, prefer PowerShell or cmd over running inside PyCharm, which may spawn extra uvicorn processes (orphan processes) or cause reload to not take effect. On macOS, running directly from the command line works fine.
+**Q: Code changed but API behavior did not?**  
+An old uvicorn process may still be holding the port. On Windows, PowerShell or cmd is preferred over long-running PyCharm auto-run sessions, which may leave orphan processes or make reload ineffective.
 
+**Q: After switching from user1 to user2, the main chat area still shows user1's messages?**  
+This is a frontend SPA state-lifecycle issue. `chatStore` is global state; if `messages`, `currentSessionId`, and `sessions` are not reset during logout/login, stale messages remain visible. The current version fixes this with `chatStore.reset()` and user-state synchronization during login, logout, ChatView mounting, and route checks.
+
+**Q: A token appears valid the next day, but the username is missing in the lower-left corner?**  
+The original issue was that the frontend only checked whether a token existed in localStorage. It did not call `/api/auth/me` before entering protected pages, and `userInfo` was not guaranteed to be loaded. The current version adds token-expiration tracking and `ensureUserInfo()`.
 ---
 
 ## Development Stages
 
-This project evolved from a single-file Streamlit demo into a full backend-engineered application, mainly in these stages:
+This project evolved from a single-file Streamlit demo into a frontend/backend separated application:
 
-1. Split out the FastAPI service layer; separate frontend and backend
-2. Session management + multi-turn Agent conversation
-3. SQLite session persistence
-4. RAG retrieval augmentation (vector retrieval + re-ranking)
-5. Redis cache / rate limiting + unified response / exception system
-6. JWT authentication and user system
-7. Security hardening (session authorization protection), docs, and tests
+1. FastAPI service layer and frontend/backend separation.
+2. Session management and multi-turn Agent conversation.
+3. SQLite session persistence.
+4. RAG retrieval augmentation with vector retrieval and re-ranking.
+5. Redis caching/rate limiting, unified response, and exception system.
+6. JWT authentication and user system.
+7. Vue 3 frontend UI, session list, and Markdown message rendering.
+8. SSE streaming chat with thinking/answer display.
+9. MySQL persistence, database-backed logging, and historical log migration.
+10. User-switching, token validation, and authentication-state consistency fixes.
+
+---
+
+## Roadmap
+
+- Introduce Alembic for database migrations.
+- Add Docker Compose for MySQL / Redis / Backend / Frontend.
+- Add log-query dashboard and error statistics.
+- Improve RAG source citation and knowledge-base management.
+- Add more complete backend API tests and frontend state tests.
 
 ---
 

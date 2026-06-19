@@ -5,6 +5,8 @@ pydantic==2.13.4
 
 # ===== 数据库 ORM =====
 SQLAlchemy==2.0.50
+pymysql==1.1.0
+python-dotenv==1.2.2
 
 # ===== 缓存 / 限流 =====
 redis==8.0.0

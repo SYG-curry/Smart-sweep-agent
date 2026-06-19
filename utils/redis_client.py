@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 import redis
 import yaml
@@ -21,6 +22,10 @@ class RedisClient:
     # 类内部使用，不建议外部直接访问(约定俗称, python无私有变量)
     _instance: Optional[redis.Redis] = None
     _available: bool = False
+    # 上一次连接失败的时间
+    _last_failed_at: float = 0
+    # 失败后多少秒内不再重试Redis
+    _retry_interval: int = 30
 
     """
     @classmethod 是类方法装饰器，它把方法变成操作类本身，而不是操作实例。
@@ -34,10 +39,21 @@ class RedisClient:
     """
     @classmethod
     def get_client(cls) -> Optional[redis.Redis]:
-        if cls._instance is not None:
-            return cls._instance if cls._available else None
+        now = time.time()
+
+        # 如果上次失败距离现在不到30秒, 直接降级, 不再阻塞ping
+        # 优化的意义: 1. Redis在很多地方都有使用, 比如rate_limit, RAG cache等, 这样如果Redis失效每个地方都需要等待超时拖累时间
+        # 2. 减少Redis连接失败的次数, 避免每次请求都去重连Redis, 第一次失败后的30s内都可以直接返回None, 不会卡, 30s之后再尝试恢复
+        if not cls._available and cls._last_failed_at:
+            if now - cls._last_failed_at < cls._retry_interval:
+                return None
+
+        if cls._instance is not None and cls._available:
+            return cls._instance
+
         if not redis_conf:
             cls._available = False
+            cls._last_failed_at = now
             return None
 
         try:
@@ -58,11 +74,14 @@ class RedisClient:
             cls._instance = redis.Redis(**redis_params)
             cls._instance.ping()
             cls._available = True
+            cls._last_failed_at = 0
             logger.info("[redis_client] Redis连接成功")
             return cls._instance
         except Exception as e:
             logger.warning(f"[redis_client] Redis 连接失败, 将使用降级模式: {e}")
+            cls._instance = None
             cls._available = False
+            cls._last_failed_at = now
             return None
 
     @classmethod

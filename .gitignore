@@ -8,16 +8,20 @@ build/
 dist/
 *.egg-info/
 .eggs/
+.mypy_cache/
+.ruff_cache/
+.pytype/
 
-# ===== 虚拟环境 =====
+# ===== Virtual environments =====
 .venv/
 venv/
 env/
 ENV/
 
-# ===== 测试 / 覆盖率缓存 =====
+# ===== Test / coverage cache =====
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .cache/
 
@@ -26,28 +30,52 @@ htmlcov/
 .vscode/
 *.iml
 
-# ===== 操作系统 =====
+# ===== OS =====
 .DS_Store
 Thumbs.db
 
-# ===== 环境变量 / 密钥（切勿提交真实凭据）=====
+# ===== Environment variables / secrets =====
 .env
-*.env
+.env.*
+!.env.example
 config/secrets.yml
 
-# ===== 运行日志 =====
+# ===== Runtime logs =====
 logs/
 *.log
 
-# ===== 数据库（含用户与密码哈希，禁止提交）=====
+# ===== Local databases =====
 data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.sqlite
 *.sqlite3
 
-# ===== 向量库（应由用户本地构建）=====
+# ===== Vector stores / local indexes =====
 chroma_db/
 **/chroma_db/
 
-# ===== 调试 / 临时文件 =====
+# ===== Frontend dependencies / build output =====
+node_modules/
+**/node_modules/
+frontend/smartsweep-fronted/dist/
+frontend/smartsweep-fronted/dist-ssr/
+frontend/smartsweep-fronted/coverage/
+frontend/smartsweep-fronted/*.local
+frontend/smartsweep-fronted/.env.local
+frontend/smartsweep-fronted/.env.*.local
+frontend/smartsweep-fronted/.vite/
+
+# ===== NPM / package manager logs =====
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ===== Debug / temp files =====
 md5.text
 md5.txt
 *.tmp
+*.bak
+*.swp

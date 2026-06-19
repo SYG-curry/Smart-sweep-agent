@@ -67,18 +67,8 @@ def get_current_user_optional(
     if not user_id:
         return None
 
-    return session_manager.get_user(db=db, user_id=user_id)
+    user = session_manager.get_user(db=db, user_id=user_id)
+    if not user or not user.is_active:
+        return None
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return user

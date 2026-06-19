@@ -1,24 +1,19 @@
 # SmartSweepAgent · 智扫通机器人智能客服
 
-基于 **LangChain + FastAPI** 构建的扫地机器人领域智能客服 Agent。支持 RAG 知识库问答、多轮对话、用户认证与会话隔离、缓存与限流，是一个具备完整后端工程结构的 AI 应用。
-**当前主要完成一个完整后端，前端页面暂时未做，主要希望初学者通过Fast API自带的接口文档进行接口调试学习**
+基于 **LangChain + FastAPI + Vue 3** 构建的扫地机器人领域智能客服 Agent。支持 RAG 知识库问答、多轮对话、用户认证与会话隔离、SSE 流式输出、Redis 缓存/限流以及 MySQL 日志持久化，是一个从 Agent Demo 演进而来的前后端分离 AI 应用。
 
 > For English, see [README.en.md](README.en.md)
 
 ---
 
-## 目录
+## 版本说明
 
-- [功能特性](#功能特性)
-- [技术栈](#技术栈)
-- [系统架构](#系统架构)
-- [项目结构](#项目结构)
-- [环境要求](#环境要求)
-- [快速开始](#快速开始)
-- [配置说明](#配置说明)
-- [API 接口](#api-接口)
-- [运行测试](#运行测试)
-- [常见问题](#常见问题)
+| 版本 | 说明 |
+| --- | --- |
+| `v0.1.0` | 初始版本：基础 RAG Agent、FastAPI 后端和初始聊天能力 |
+| `v0.2.0` | 当前版本：多用户认证、会话隔离、Vue 聊天界面、SSE 流式输出、MySQL 日志持久化 |
+
+> 旧版本可在 GitHub 的 **Tags / Releases** 中选择 `v0.1.0` 查看。
 
 ---
 
@@ -26,120 +21,108 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| **ReAct Agent** | 基于 LangChain，支持工具调用（知识库检索、天气、用户信息、外部数据、报告生成），并通过中间件实现工具监控与动态提示词切换 |
-| **RAG 知识库** | Chroma 向量检索 + Reranker 重排，召回 Top-K 候选后精排取 Top-N，提升问答相关性 |
-| **多轮对话** | 基于 SQLite 持久化会话，服务重启后历史不丢失 |
-| **用户系统** | JWT 认证 + bcrypt 密码哈希，会话按用户隔离，支持匿名访问 |
-| **缓存 / 限流** | Redis 缓存 RAG 检索结果、基于 IP+路径的接口限流；Redis 不可用时自动降级，核心功能不受影响 |
-| **统一响应** | 所有接口返回 `{code, message, data, request_id, elapsed_ms}` 标准结构，配合全局异常处理与请求追踪 |
-| **双入口** | FastAPI 提供标准 REST API；保留 Streamlit 页面用于快速演示 |
+| **ReAct Agent** | 基于 LangChain，支持知识库检索、天气、用户信息、外部数据、报告生成等工具调用 |
+| **RAG 知识库** | Chroma 向量检索 + Reranker 重排，召回 Top-K 后精排 Top-N |
+| **多轮对话** | 会话与消息持久化到数据库，支持历史消息、会话列表和删除会话 |
+| **用户系统** | JWT 认证 + bcrypt 密码哈希，会话按用户隔离 |
+| **SSE 流式聊天** | `/api/chat/stream` 输出 `session` / `thinking` / `answer` / `done` / `error` 事件 |
+| **前端界面** | Vue 3 + Pinia + Vue Router，支持登录注册、会话列表、Markdown 渲染和思考过程展示 |
+| **缓存 / 限流** | Redis 缓存 RAG 检索结果，并基于 IP+路径限流；Redis 不可用时自动降级 |
+| **统一响应** | REST API 返回 `{code, message, data, request_id, elapsed_ms}` 标准结构 |
+| **日志入库** | 运行日志通过异步队列写入 MySQL `app_logs` 表，支持旧日志迁移 |
+
+---
+
+## v0.2.0 主要更新
+
+相比 `v0.1.0`，当前版本主要优化：
+
+- 新增 Vue 3 前端工程，完成登录、注册、聊天主页面和会话列表。
+- 新增 JWT 用户认证和 `/api/auth/me` 当前用户校验。
+- 新增多用户会话隔离，登录用户只能访问自己的会话。
+- 新增前端 `authStore` / `chatStore` 状态管理，修复切换用户时旧聊天内容残留的问题。
+- 新增 `/api/chat/stream` SSE 流式聊天接口，前端按事件类型渲染思考过程和最终答案。
+- 优化 Agent 流式输出事件，将最终答案统一输出为 `answer` 类型。
+- 新增 MySQL 支持，数据库连接通过 `DATABASE_URL` 配置。
+- 新增 `app_logs` 日志表和 `DatabaseLogHandler`，运行日志可写入 MySQL。
+- 新增 `scripts/migrate_logs_to_mysql.py` 和 `scripts/migrate_sqlite_to_mysql.py`。
+- 优化 `.gitignore`，避免提交环境变量、运行日志、数据库文件和构建产物。
 
 ---
 
 ## 技术栈
 
-- **Web 框架**：FastAPI · Uvicorn · Pydantic
+- **后端框架**：FastAPI · Uvicorn · Pydantic
 - **LLM / Agent**：LangChain · LangGraph · 通义千问（qwen3-max）
 - **RAG**：Chroma · DashScope Embeddings（text-embedding-v4）
-- **数据库**：SQLAlchemy + SQLite
+- **数据库**：SQLAlchemy · MySQL（推荐）· SQLite fallback
 - **缓存 / 限流**：Redis
 - **认证**：python-jose（JWT）· passlib + bcrypt
-- **前端 Demo**：Streamlit
+- **前端**：Vue 3 · Vite · Pinia · Vue Router · Axios · markdown-it
+- **日志**：Python logging · QueueHandler / QueueListener · MySQL `app_logs`
+- **演示入口**：Streamlit
 
 ---
 
 ## 系统架构
 
+```text
+HTTP / SSE 请求
+   │
+   ▼
+FastAPI Middleware（request_id / 耗时 / 访问日志）
+   │
+   ▼
+Rate Limit（Redis，可降级）
+   │
+   ▼
+API Routers（auth / chat / health）
+   │
+   ├── ReactAgent + Tools → LLM / 工具调用
+   ├── SessionManager → MySQL / SQLite
+   ├── RAG Service → Chroma + Redis
+   └── Logger → QueueHandler → DatabaseLogHandler → app_logs
 ```
-                    HTTP 请求
-                        │
-        ┌───────────────▼────────────────┐
-        │  中间件：请求ID / 耗时 / 访问日志   │
-        └───────────────┬────────────────┘
-                        │
-                ┌───────▼────────┐
-                │  限流（Redis）   │
-                └───────┬────────┘
-                        │
-              ┌─────────▼──────────┐
-              │  API 路由层          │  api/routers
-              │  auth / chat / health│
-              └─────────┬──────────┘
-                        │
-         ┌──────────────┼───────────────┐
-         │              │               │
-  ┌──────▼─────┐ ┌──────▼──────┐ ┌──────▼───────┐
-  │ ReactAgent │ │SessionManager│ │  RAG 服务     │
-  │ + 工具      │ │ + Repository │ │ 检索+重排+缓存 │
-  └──────┬─────┘ └──────┬──────┘ └──────┬───────┘
-         │              │               │
-   工具/模型调用      SQLite 持久化    Chroma + Redis
-```
-
-请求处理链路：中间件注入请求上下文 → 限流校验 → 路由分发 → 业务层（Agent / 会话管理 / RAG）→ 数据层（SQLite / Chroma）→ 统一响应。
 
 ---
 
 ## 项目结构
 
-```
+```text
 SmartSweepAgent/
-├── api/                   # FastAPI 服务层
-│   ├── main.py               # 应用入口：路由注册、中间件、全局异常处理
-│   ├── context.py            # 请求级 ContextVar（请求ID、起始时间）
-│   ├── routers/              # 路由：auth(认证) / chat(对话) / health(健康检查)
-│   ├── schemas/              # Pydantic 请求/响应模型
-│   ├── dependencies/         # 依赖注入：auth(JWT校验) / rate_limit(限流)
-│   ├── middleware/           # HTTP 中间件：访问日志
-│   └── exceptions/           # 业务异常定义
-├── agent/                 # 智能体
-│   ├── react_agent.py        # ReAct Agent 封装
-│   └── tools/                # 工具定义与 Agent 中间件
-├── rag/                   # 检索增强
-│   ├── vector_store.py       # Chroma 向量库（建库 / 检索）
-│   ├── retriever.py          # 混合检索器（检索 + 重排）
-│   ├── reranker.py           # 重排序
-│   └── rag_service.py        # RAG 主流程（含缓存）
-├── session/               # 会话与用户
-│   ├── models.py             # SQLAlchemy ORM（users / sessions / messages）
-│   ├── repository.py         # 数据库 CRUD
-│   └── session_manager.py    # 业务管理层
-├── model/
-│   └── factory.py            # 模型工厂（Chat / Embedding）
-├── utils/                 # 通用工具
-│   ├── config_handler.py     # YAML 配置加载
-│   ├── db.py                 # 数据库连接与会话
-│   ├── redis_client.py       # Redis 连接（含降级）
-│   ├── cache.py              # 缓存读写封装
-│   ├── jwt_handler.py        # JWT 编解码
-│   ├── logger_handler.py     # 日志
-│   ├── file_handler.py       # 文件加载与 MD5
-│   ├── prompt_loader.py      # 提示词加载
-│   └── path_tool.py          # 路径工具
-├── config/                # YAML 配置文件
-│   ├── agent.yml / chroma.yml / rag.yml / prompts.yml
-│   ├── redis.yml / auth.yml
-├── prompts/                  # 提示词文本
-├── data/                     # 知识库源文件与 SQLite 数据库
-├── logs/                     # 运行日志
-├── app.py                    # Streamlit Demo 入口
-├── requirements.txt
-└── README.md
+├── api/                         # FastAPI 服务层
+├── agent/                       # ReAct Agent 与工具
+├── rag/                         # 向量检索、重排、RAG 服务
+├── session/                     # 用户、会话、消息、日志 ORM
+├── model/                       # 模型工厂
+├── utils/                       # 配置、数据库、Redis、JWT、日志等工具
+├── frontend/smartsweep-fronted/ # Vue 3 前端
+├── scripts/                     # 日志迁移、SQLite 到 MySQL 迁移脚本
+├── config/                      # YAML 配置文件
+├── prompts/                     # 提示词文本
+├── data/                        # 知识库源文件，本地数据库不提交
+├── tests/                       # 单元测试
+├── app.py                       # Streamlit Demo
+├── requirements.txt             # 后端依赖
+├── README.md
+└── README.en.md
 ```
 
 ---
 
 ## 环境要求
 
-- Python 3.10 及以上（开发环境为 3.11）
-- Redis（可选，未启动时自动降级，缓存与限流功能不可用但不影响对话）
+- Python 3.10+（开发环境为 3.11）
+- Node.js `^20.19.0 || >=22.12.0`
+- MySQL 8.x（推荐；也可使用 SQLite fallback）
+- Redis（可选，未启动时自动降级）
 - 通义千问 / DashScope API Key
 
 ---
 
 ## 快速开始
 
-### 1. 创建虚拟环境并安装依赖
+### 1. 安装后端依赖
 
 ```bash
 conda create -n RAG_Agent python=3.11
@@ -147,24 +130,32 @@ conda activate RAG_Agent
 pip install -r requirements.txt
 ```
 
-### 2. 配置 API Key
+### 2. 配置环境变量
 
-项目使用通义千问模型，需要设置 DashScope API Key 环境变量：
+复制 `.env.example` 为 `.env`，并按本机环境修改：
 
-```bash
-# Windows PowerShell
-$env:DASHSCOPE_API_KEY="你的key"
-
-# Linux / macOS
-export DASHSCOPE_API_KEY="你的key"
+```env
+DATABASE_URL=mysql+pymysql://root:your_password@localhost:3306/smartsweep?charset=utf8mb4
+DASHSCOPE_API_KEY=your_dashscope_api_key
 ```
 
-### 3. 检查配置文件
+如果使用 SQLite fallback：
 
-按需修改 `config/` 下的配置（详见[配置说明](#配置说明)）。
-**生产环境务必修改 `config/auth.yml` 的 `secret_key`，并妥善保管 `config/redis.yml` 中的密码。**
+```env
+DATABASE_URL=sqlite:///data/smartsweep_agent.db
+```
 
-### 4. 构建知识库（首次运行）
+### 3. 检查 MySQL
+
+```bash
+python test_mysql_connection.py
+```
+
+该脚本会检查 MySQL 连接，并在数据库不存在时创建数据库。表结构会在 FastAPI 启动时自动创建。
+
+> 当前仍为开发阶段，暂未引入 Alembic。生产项目建议使用 Alembic 管理数据库迁移。
+
+### 4. 构建知识库
 
 将知识文档放入 `data/` 目录（支持 `.txt` / `.pdf`），然后构建向量库：
 
@@ -172,102 +163,76 @@ export DASHSCOPE_API_KEY="你的key"
 python -m rag.vector_store
 ```
 
-> 通过文件 MD5 去重，重复运行不会重复入库。
-
-### 5. 启动 API 服务
+### 5. 启动后端
 
 ```bash
 python -m uvicorn api.main:app --port 8000
 ```
 
-启动后访问交互式文档：`http://127.0.0.1:8000/docs`
+接口文档：`http://127.0.0.1:8000/docs`
 
-### 6.（可选）启动 Streamlit Demo
+### 6. 启动前端
 
 ```bash
-streamlit run app.py
+cd frontend/smartsweep-fronted
+npm install
+npm run dev
 ```
 
----
-
-## 配置说明
-
-所有配置位于 `config/` 目录，均为 YAML 格式。
-
-| 文件 | 关键项 | 说明 |
-| --- | --- | --- |
-| `rag.yml` | `chat_model_name` / `embedding_model_name` | 对话模型与向量模型名称 |
-| `chroma.yml` | `retriever_k` / `rerank_top_k` | 向量检索召回数量 / 重排后保留数量 |
-| `chroma.yml` | `chunk_size` / `chunk_overlap` | 文档切分大小与重叠 |
-| `chroma.yml` | `data_path` / `persist_directory` | 知识库源目录 / 向量库持久化目录 |
-| `agent.yml` | `external_data_path` | 外部用户数据文件路径 |
-| `prompts.yml` | `*_prompt_path` | 各场景提示词文件路径 |
-| `redis.yml` | `host` / `port` / `password` | Redis 连接信息 |
-| `redis.yml` | `cache.rag_ttl` | RAG 缓存过期时间（秒） |
-| `redis.yml` | `cache.rate_limit_ttl` / `rate_limit_max_requests` | 限流窗口时长 / 窗口内最大请求数 |
-| `auth.yml` | `secret_key` / `algorithm` | JWT 签名密钥与算法 |
-| `auth.yml` | `access_token_expire_minutes` | Token 有效期（分钟） |
+默认前端地址：`http://localhost:5173`
 
 ---
 
 ## API 接口
 
-服务前缀为 `/api`，认证相关接口前缀为 `/api/auth`。
-
 ### 认证
-
-| 方法 | 路径 | 说明 | 是否需登录 |
-| --- | --- | --- | --- |
-| POST | `/api/auth/register` | 用户注册 | 否 |
-| POST | `/api/auth/login` | 登录，返回 JWT Token | 否 |
-| GET | `/api/auth/me` | 获取当前用户信息 | 是 |
-
-### 对话与会话
-
-| 方法 | 路径 | 说明 | 是否需登录 |
-| --- | --- | --- | --- |
-| POST | `/api/chat` | 发起对话（支持可选登录，登录后会话绑定用户） | 可选 |
-| GET | `/api/sessions` | 获取我的会话列表 | 是 |
-| GET | `/api/session/{session_id}/messages` | 查询会话历史消息 | 可选（校验归属） |
-| DELETE | `/api/session/{session_id}` | 删除会话 | 可选（校验归属） |
-
-### 其它
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 健康检查 |
-| GET | `/` | 服务信息 |
+| POST | `/api/auth/register` | 用户注册 |
+| POST | `/api/auth/login` | 登录并返回 JWT Token |
+| GET | `/api/auth/me` | 获取当前用户信息 |
 
-### 请求示例
+### 对话与会话
 
-```bash
-# 注册
-curl -X POST http://127.0.0.1:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice", "password": "123456"}'
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/chat` | 普通对话，返回完整 JSON |
+| POST | `/api/chat/stream` | SSE 流式对话 |
+| GET | `/api/sessions` | 获取当前用户会话列表 |
+| GET | `/api/session/{session_id}/messages` | 查询会话历史消息 |
+| DELETE | `/api/session/{session_id}` | 删除会话 |
 
-# 登录获取 token
-curl -X POST http://127.0.0.1:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice", "password": "123456"}'
+### SSE 事件
 
-# 携带 token 对话
-curl -X POST http://127.0.0.1:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <你的token>" \
-  -d '{"query": "小户型适合什么扫地机器人？", "session_id": null}'
+| 类型 | 说明 |
+| --- | --- |
+| `session` | 返回当前会话 ID |
+| `thinking` | 展示 Agent 执行过程 |
+| `answer` | 最终答案片段 |
+| `done` | 响应结束 |
+| `error` | 响应失败 |
+
+---
+
+## 日志与迁移
+
+当前版本支持将运行日志写入 MySQL `app_logs` 表：
+
+```text
+logger → QueueHandler → QueueListener → DatabaseLogHandler → app_logs
 ```
 
-### 统一响应格式
+迁移旧日志：
 
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": { "answer": "...", "session_id": "uuid" },
-  "request_id": "abc12345",
-  "elapsed_ms": 156.78
-}
+```bash
+python scripts/migrate_logs_to_mysql.py
+```
+
+迁移 SQLite 数据到 MySQL：
+
+```bash
+python scripts/migrate_sqlite_to_mysql.py
 ```
 
 ---
@@ -278,37 +243,63 @@ curl -X POST http://127.0.0.1:8000/api/chat \
 pytest tests/ -v
 ```
 
-测试覆盖 JWT 编解码、密码哈希、会话数据访问与用户隔离等不依赖 LLM 的核心逻辑。
+前端构建验证：
+
+```bash
+cd frontend/smartsweep-fronted
+npm run build
+```
 
 ---
 
-## 常见问题(亲测)
+## 常见问题（亲测）
 
-**Q: 启动报错 `password cannot be longer than 72 bytes`？**
-passlib 1.7.4 与 bcrypt 5.x 不兼容。请确保安装 `bcrypt==4.0.1`（已在 `requirements.txt` 锁定）。
+**Q: 启动报错 `password cannot be longer than 72 bytes`？**  
+passlib 1.7.4 与 bcrypt 5.x 不兼容。请确保安装 `bcrypt==4.0.1`。
 
-**Q: 请求超时或 Redis 报错？**
-未启动 Redis 时系统会自动降级，对话功能正常，仅缓存与限流不可用。若已启动 Redis 仍超时，检查 `config/redis.yml` 的 host / port / password。
+**Q: 请求超时或 Redis 报错？**  
+未启动 Redis 时系统会自动降级，对话功能正常，仅缓存与限流不可用。若 Redis 已启动仍超时，请检查 `config/redis.yml`。
 
-**Q: 修改了 ORM 模型后报外键或字段错误？**
-`create_all` 不会修改已存在的表结构。删除 `data/smartsweep_agent.db` 后重启服务以重建表。
+**Q: 修改 ORM 模型后字段没有生效？**  
+`Base.metadata.create_all()` 只会创建不存在的表，不会修改已存在表结构。开发期可以删除本地测试数据库后重启服务；MySQL 环境建议手动调整表结构，后续应引入 Alembic。
 
-**Q: 改了代码但接口行为没变化？**
-可能是旧的 uvicorn 进程仍占用端口。先确认终端有请求日志，必要时查杀残留进程后重启。
-注意别在pycharm中运行，pycharm会自动启动uvicorn进程，会导致端口被占用，无法退出程序的情况(孤儿进程)，也会存在reload不生效情况。
-Mac可以直接在命令行中运行不会出现问题，Win系统建议在powershell或者cmd中运行，基本不会出现问题
+**Q: 改了代码但接口行为没变化？**  
+可能是旧 uvicorn 进程仍占用端口。Windows 建议使用 PowerShell 或 cmd 启动，不建议长期依赖 PyCharm 自动运行，避免残留孤儿进程导致端口占用或 reload 不生效。
 
+**Q: 切换 user1 / user2 后，主聊天区显示了上一个用户的对话？**  
+这是前端单页应用状态生命周期问题。`chatStore` 是全局状态，如果登出或重新登录时不清空 `messages`、`currentSessionId`、`sessions`，主聊天区会残留上一个用户的消息。当前版本通过 `chatStore.reset()`，并在 login / logout / ChatView mounted / 路由校验中重新同步用户状态解决。
+
+**Q: token 隔天看起来仍然有效，左下角却没有用户名？**  
+原问题是前端只根据 localStorage 中是否存在 token 判断登录态，没有进入页面前调用 `/api/auth/me` 校验 token 是否真实有效，也没有保证 `userInfo` 已加载。当前版本增加了 token 过期时间记录和 `ensureUserInfo()`。
 ---
 
 ## 开发阶段说明
 
-本项目从 Streamlit 单文件 Demo 逐步演进为完整后端工程，主要阶段：
+本项目从 Streamlit 单文件 Demo 逐步演进为完整前后端分离应用：
 
-1. 拆分 FastAPI 服务层，前后端分离
-2. 会话管理 + Agent 多轮对话
-3. SQLite 会话持久化
-4. RAG 检索增强（向量检索 + 重排）
-5. Redis 缓存 / 限流 + 统一响应 / 异常体系
-6. JWT 认证与用户系统
-7. 安全加固（会话越权防护）、文档与测试完善
-"# Smart-sweep-agent" 
+1. FastAPI 服务层拆分和前后端分离。
+2. 会话管理 + Agent 多轮对话。
+3. SQLite 会话持久化。
+4. RAG 检索增强（向量检索 + 重排）。
+5. Redis 缓存 / 限流 + 统一响应 / 异常体系。
+6. JWT 认证与用户系统。
+7. Vue 3 前端界面、会话列表、Markdown 消息渲染。
+8. SSE 流式聊天与 thinking / answer 分区展示。
+9. MySQL 持久化、日志入库与历史日志迁移。
+10. 多用户切换、token 校验、认证状态一致性修复。
+
+---
+
+## 后续计划
+
+- 引入 Alembic 管理数据库迁移。
+- 增加 Docker Compose，一键启动 MySQL / Redis / Backend / Frontend。
+- 增加日志查询后台和错误统计页面。
+- 增强 RAG 引用来源展示和知识库管理能力。
+- 增加更完整的后端 API 测试和前端状态测试。
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).

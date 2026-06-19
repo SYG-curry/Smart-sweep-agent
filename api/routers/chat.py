@@ -4,8 +4,10 @@
     调用Agent
     返回答案
 """
-import time
+import time, json
+
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from agent.react_agent import ReactAgent
 from api.dependencies.rate_limit import rate_limit
@@ -27,6 +29,19 @@ def _verify_session_access(session, current_user):
     if session.user_id is not None:
         if current_user is None or current_user.id != session.user_id:
             raise ForbiddenException("无权访问该会话")
+
+# SSE格式化函数
+def _sse_event(data: dict) -> str:
+    """
+        SSE 实际传输格式是：
+            data: {"type":"thinking","content":"正在检索知识库..."}
+
+            data: {"type":"answer","content":"小户型"}
+
+            data: {"type":"done"}
+        每个事件后面要有两个换行。 否则浏览器端的 reader 可能无法正确识别一个事件结束
+    """
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 agent = ReactAgent()
 
@@ -98,6 +113,116 @@ def chat(
         request_id=request_id,
         elapsed_ms=round(elapsed, 2),
     )
+
+# 流式输出
+@router.post("/chat/stream")
+def chat_stream(
+        request: ChatRequest,
+        db: Session = Depends(get_db),
+        _: None = Depends(rate_limit),
+        current_user = Depends(get_current_user_optional),
+):
+    request_id = request_id_var.get()
+    start_time = request_start_time_var.get()
+
+    user_id = current_user.id if current_user else None
+
+    session = session_manager.get_or_create_session(
+        db=db,
+        session_id=request.session_id,
+        user_id=user_id,
+    )
+
+    history = session_manager.get_messages(
+        db=db,
+        session_id=session.id,
+    )
+
+    def event_generator():
+        answer_chunks = []
+
+        try:
+            # 先把session_id返回给前端
+            # 如果这是新对话, 前端需要立即知道新session_id
+            yield _sse_event({
+                "type": "session",
+                "session_id": session.id,
+                "request_id": request_id,
+            })
+
+            for event in agent.execute_event_stream(
+                query=request.query,
+                history=history
+            ):
+                event_type = event.get("type")
+                content = event.get("content", "")
+
+                if event_type == "thinking":
+                    yield _sse_event({
+                        "type": "thinking",
+                        "content": content,
+                    })
+                elif event_type == "answer":
+                    answer_chunks.append(content)
+                    yield _sse_event({
+                        "type": "answer",
+                        "content": content,
+                    })
+
+            answer = "".join(answer_chunks).strip()
+
+            if not answer:
+                answer = "抱歉, 我暂时无法回答这个问题"
+                yield _sse_event({
+                    "type": "answer",
+                    "content": answer,
+                })
+
+            # 流式结束后, 再把用户消息和助手消息写入数据库
+            # 这里只保存最终答案, 不保存thinking过程
+            session_manager.add_message(
+                db=db,
+                session_id=session.id,
+                role="user",
+                content=request.query
+            )
+
+            session_manager.add_message(
+                db=db,
+                session_id=session.id,
+                role="assistant",
+                content=answer
+            )
+
+            elapsed = (time.time() - start_time) * 1000
+
+            yield _sse_event({
+                "type": "done",
+                "request_id": request_id,
+                "elapsed_ms": round(elapsed, 2),
+            })
+
+        except Exception as e:
+            logger.error(f"[chat_stream] Agent执行失败:{e}", exc_info=True)
+
+            yield _sse_event({
+                "type": "error",
+                "message": f"Agent执行失败: {str(e)}",
+            })
+
+    # 普通JSON是: 后端全部生成后 -> 一次性返回
+    # StreamingResponse是: 后端生成一点 -> 立刻发给前端 ……
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Request-ID": request_id
+        }
+    )
+
 
 # 获取会话历史接口
 @router.get("/session/{session_id}/messages")

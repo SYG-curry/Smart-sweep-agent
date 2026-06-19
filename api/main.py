@@ -1,5 +1,4 @@
-import time
-import uuid
+import time, uuid, session.models
 from api.context import request_id_var, request_start_time_var
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -8,14 +7,29 @@ from api.middleware.middleware import LoggingMiddleware
 from api.routers import health, chat, auth
 from utils.db import Base, engine
 from utils.logger_handler import logger
-
-
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI(
     title="SmartSweepAgent API",
     description="智扫通机器人智能客服后端服务",
     version="0.5.0",
+)
+
+# 开发阶段允许所有来源, 生产环境换成具体域名
+origins = [
+    "http://localhost:5173",    # vite默认端口
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.1:5174",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,      # 允许的来源
+    allow_credentials=True,     # 允许携带 Cookie (JWT 存 Cookie 时需要)
+    allow_methods=["*"],        # 允许所有 HTTP 方法(GET……)
+    allow_headers=["*"],        # 允许所有的请求头(包括 Authorization)
 )
 
 # 自动创建所有的表
